@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>__SITE_TITLE__</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="badge" id="env-badge">__SITE_TITLE__</div>
+            <h1>Multi-Environment Deploy</h1>
+            <p>Deployed via <strong>GitHub Actions</strong></p>
+            <div class="info">
+                <p><span class="label">Environment:</span> <span id="env-name">__SITE_TITLE__</span></p>
+                <p><span class="label">Deploy Time:</span> <span id="deploy-time">__DEPLOY_TIME__</span></p>
+                <p><span class="label">Commit SHA:</span> <span id="commit-sha">__COMMIT_SHA__</span></p>
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
