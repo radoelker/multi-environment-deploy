@@ -1,0 +1,148 @@
+---
+# =============================================================================
+# playbook_prepare_host.yml
+# Executed FROM: local workstation
+# Target:  EC2 webservers (the Ansible control node)
+#
+# What it does:
+#   1. Verify connectivity to ansible_bastion hosts (abort on any failure)
+#   2. Update & upgrade Ubuntu 24.04
+
+# =============================================================================
+
+- name: "Phase 0 — Connectivity pre-flight (ansible_bastion hosts)"
+  hosts: webservers
+  gather_facts: false
+  any_errors_fatal: true       # abort entire run if any host fails
+
+  tasks:
+    - name: "Ping webservers inventory hosts"
+      ansible.builtin.ping:
+      register: ping_result
+
+    - name: "Assert every host responded"
+      ansible.builtin.assert:
+        that:
+          - ping_result.ping == "pong"
+        fail_msg: >
+          [WARNING] Host '{{ inventory_hostname }}' did not respond to ping.
+          Aborting playbook to prevent partial configuration.
+        success_msg: "Host '{{ inventory_hostname }}' is reachable."
+
+# -----------------------------------------------------------------------------
+- name: "Phase 1 — Prepare webservers host"
+  hosts: webservers
+  become: true
+  gather_facts: true
+
+  vars:
+    local_ssh_privkey_src: "~/.ssh/rainer-multi-env-key.pem"
+    docker_gpg_url: "https://download.docker.com/linux/ubuntu/gpg"
+    docker_repo_url: "https://download.docker.com/linux/ubuntu"
+    packages_base:
+      - curl
+      - ca-certificates
+      - gnupg
+      - lsb-release
+    environments:
+      - dev
+      - staging
+      - production
+
+  handlers:
+  - name: restart nginx
+    systemd:
+      name: nginx
+      state: restarted
+    become: yes
+  - name: reload nginx
+    systemd:
+      name: nginx
+      state: reloaded
+    become: yes
+
+  tasks:
+    # ----- OS update & upgrade -----------------------------------------------
+
+    - name: "Update apt cache"
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "Upgrade all packages to latest (dist-upgrade)"
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
+        autoclean: true
+      register: apt_upgrade_result
+
+    - name: "Report upgrade summary"
+      ansible.builtin.debug:
+        msg: >
+          Packages changed: {{ apt_upgrade_result.changed }}.
+          {% if apt_upgrade_result.changed %}
+          Upgraded packages: {{ apt_upgrade_result.stdout_lines | select('match', '^Inst ') | list | length }}
+          {% endif %}
+
+    - name: "Install prerequisite packages"
+      ansible.builtin.apt:
+        name: "{{ packages_base }}"
+        state: present
+    # -- install NGINX ---------------------------------------------------------------------
+
+    - name: Install nginx
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+      become: yes
+
+    # -- web directories---------------------------------------------------------------------
+    - name: Create and configure web environment directories
+      file:
+        path: "/var/www/{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+        recurse: yes
+      loop: "{{ environments }}"
+      become: yes
+    # -----------------------------------------------------------------------------
+    - name: Create nginx vhost configs
+      template:
+        src: nginx_vhost.j2
+        dest: "/etc/nginx/sites-available/{{ item }}"
+      loop: "{{ environments }}"
+      become: yes
+      notify: reload nginx
+
+    # -----------------------------------------------------------------------------
+
+    - name: Enable nginx vhosts
+      file:
+        src: "/etc/nginx/sites-available/{{ item }}"
+        dest: "/etc/nginx/sites-enabled/{{ item }}"
+        state: link
+      loop: "{{ environments }}"
+      become: yes
+    # -----------------------------------------------------------------------------
+
+    - name: Remove default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      become: yes
+
+    # -----------------------------------------------------------------------------
+    - name: Validate nginx config
+      command: nginx -t
+      become: yes
+
+    # -----------------------------------------------------------------------------
+    - name: Restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+      become: yes
+
